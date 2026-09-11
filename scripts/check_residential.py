@@ -328,36 +328,45 @@ def test_node_xray(node_str, info, socks_port, timeout=12):
         with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False)
 
-        proc = subprocess.run(
+        # Xray 是守护进程，用 Popen 后台运行，测完后 kill
+        proc = subprocess.Popen(
             ["./xray", "run", "-config", cfg_path],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=timeout,
         )
-        if proc.returncode != 0:
-            return False, 0
+        time.sleep(1.5)  # 等待 xray 完成初始化并绑定 socks 端口
 
         start = time.time()
         try:
             req = urllib.request.Request(
-                "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,asn,mobile,proxy, Hosting",
+                "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,asn,mobile,proxy,Hosting",
                 headers={"User-Agent": "Mozilla/5.0"},
             )
-            with urllib.request.urlopen(req, timeout=8, proxy=urllib.request.ProxyHandler(
+            with urllib.request.urlopen(req, timeout=10, proxy=urllib.request.ProxyHandler(
                 {"http": f"http://127.0.0.1:{socks_port}", "https": f"http://127.0.0.1:{socks_port}"}
             )) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             delay = int((time.time() - start) * 1000)
             if data.get("status") == "success":
-                return True, delay, data
+                result = (True, delay, data)
             else:
-                return False, delay, {}
+                result = (False, delay, {})
         except Exception:
             delay = int((time.time() - start) * 1000)
-            return False, delay, {}
-
-    finally:
-        if os.path.exists(cfg_path):
-            os.remove(cfg_path)
+            result = (False, delay, {})
+        finally:
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            if os.path.exists(cfg_path):
+                os.remove(cfg_path)
+                return result
+    except Exception:
+        return False, 0, {}
 
 
 def query_ip_info_via_proxy(socks_port):
