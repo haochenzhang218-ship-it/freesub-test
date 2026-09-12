@@ -357,9 +357,10 @@ def test_node_xray(node_str, info, socks_port, timeout=12):
                 "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,asn,mobile,proxy,Hosting",
                 headers={"User-Agent": "Mozilla/5.0"},
             )
-            with urllib.request.urlopen(req, timeout=10, proxy=urllib.request.ProxyHandler(
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler(
                 {"http": f"http://127.0.0.1:{socks_port}", "https": f"http://127.0.0.1:{socks_port}"}
-            )) as resp:
+            ))
+            with opener.open(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             delay = int((time.time() - start) * 1000)
             _logger.debug("ip-api 返回: status=%s query=%s country=%s", data.get("status"), data.get("query"), data.get("country"))
