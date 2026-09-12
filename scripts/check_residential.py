@@ -354,7 +354,7 @@ def test_node_xray(node_str, info, socks_port, timeout=12):
         _logger.debug("尝试 SOCKS 端口 %s 访问 ip-api.com", socks_port)
         try:
             req = urllib.request.Request(
-                "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,asn,mobile,proxy,Hosting",
+                "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,asn,mobile,proxy,Hosting,query",
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             opener = urllib.request.build_opener(urllib.request.ProxyHandler(
@@ -405,7 +405,7 @@ def query_ip_info_via_proxy(socks_port):
         })
         opener = urllib.request.build_opener(proxy_handler)
         req = urllib.request.Request(
-            "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,asn,mobile,proxy,Hosting",
+            "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,asn,mobile,proxy,Hosting,query",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
         )
         with opener.open(req, timeout=10) as resp:
