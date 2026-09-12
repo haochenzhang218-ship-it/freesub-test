@@ -26,6 +26,14 @@ import requests
 import maxminddb
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import logging
+_logger = logging.getLogger(__name__)
+_logger.setLevel(logging.DEBUG)
+_handler = logging.StreamHandler(sys.stderr)
+_handler.setLevel(logging.DEBUG)
+_handler.setFormatter(logging.Formatter('[DEBUG] %(message)s'))
+_logger.addHandler(_handler)
+
 # 复用 main.py 中的常量与判断逻辑
 CLOUDFLARE_IP_NETWORKS = [
     ipaddress.ip_network("173.245.48.0/20"),
@@ -228,6 +236,7 @@ def test_node_xray(node_str, info, socks_port, timeout=12):
     task_id = uuid.uuid4().hex
     cfg_path = f"xray_tmp_{task_id}.json"
 
+    _logger.debug("test_node_xray 入口: proto=%s server=%s port=%s", proto, info.get("server"), info.get("port"))
     try:
         if proto == "vless":
             m = re.search(r"vless://([^@]+)@([^:]+):(\d+)\??(.*)", node_str)
@@ -329,13 +338,20 @@ def test_node_xray(node_str, info, socks_port, timeout=12):
             json.dump(config, f, ensure_ascii=False)
 
         # Xray 是守护进程，用 Popen 后台运行，测完后 kill
+        _logger.debug("启动 xray 进程，配置: %s", cfg_path)
         proc = subprocess.Popen(
             ["./xray", "run", "-config", cfg_path],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        time.sleep(1.5)  # 等待 xray 完成初始化并绑定 socks 端口
+        time.sleep(2.0)
+        if proc.poll() is not None:
+            _, stderr = proc.communicate()
+            stderr_str = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            _logger.warning("xray 进程立即退出 rc=%s stderr=%s", proc.returncode, stderr_str[:500])
+            return False, 0, {}
 
         start = time.time()
+        _logger.debug("尝试 SOCKS 端口 %s 访问 ip-api.com", socks_port)
         try:
             req = urllib.request.Request(
                 "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,asn,mobile,proxy,Hosting",
@@ -346,17 +362,26 @@ def test_node_xray(node_str, info, socks_port, timeout=12):
             )) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             delay = int((time.time() - start) * 1000)
+            _logger.debug("ip-api 返回: status=%s query=%s country=%s", data.get("status"), data.get("query"), data.get("country"))
             if data.get("status") == "success":
                 result = (True, delay, data)
             else:
                 result = (False, delay, {})
-        except Exception:
+        except Exception as e:
             delay = int((time.time() - start) * 1000)
+            _logger.warning("ip-api 失败: socks=%s delay=%dms err=%s:%s", socks_port, delay, type(e).__name__, str(e)[:200])
             result = (False, delay, {})
         finally:
             try:
-                proc.terminate()
-                proc.wait(timeout=3)
+                _, xs = proc.communicate(timeout=2)
+                if xs:
+                    _logger.debug("xray stderr: %s", xs.decode("utf-8", errors="replace")[:500])
+            except Exception:
+                pass
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=3)
             except Exception:
                 try:
                     proc.kill()
@@ -364,8 +389,9 @@ def test_node_xray(node_str, info, socks_port, timeout=12):
                     pass
             if os.path.exists(cfg_path):
                 os.remove(cfg_path)
-                return result
-    except Exception:
+            return result
+    except Exception as e:
+        _logger.warning("test_node_xray 外层异常: %s:%s", type(e).__name__, str(e)[:200])
         return False, 0, {}
 
 
