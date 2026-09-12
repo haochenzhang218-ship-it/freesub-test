@@ -552,6 +552,9 @@ def main():
         conn = "✓" if success else "✗"
         print(f"      {flag} {conn} {grade:30s} | 出口IP={exit_ip or 'N/A'} | 延迟={delay_ms}ms")
 
+    # 收集优质家宽节点
+    good_nodes = [r["raw_node"] for r in results if r["grade"] == "\U0001f947 \u4f18\u8d28\u5bb6\u5bbd"]
+
     # 关闭数据库
     if country_reader:
         country_reader.close()
@@ -656,6 +659,21 @@ def main():
         cnt = grade_cnt.get(grade, 0)
         if cnt:
             print(f"  {grade}: {cnt}")
+    # 写入 residential-good.txt
+    os.makedirs("output", exist_ok=True)
+    good_count = len(good_nodes)
+    with open("output/residential-good.txt", "w", encoding="utf-8") as f:
+        for node in good_nodes:
+            f.write(node.strip() + "\n")
+    print("\n\U0001f3e0 \u4f18\u8d28\u5bb6\u5bbd\u8282\u70b9\uff1a" + str(good_count) + "\u4e2a")
+    for idx, node in enumerate(good_nodes, 1):
+        for r in results:
+            if r["raw_node"] == node:
+                print("  " + str(idx) + ". " + r["exit_country"] + " " + (r["exit_ip"] or "N/A"))
+                break
+    print("\n\U0001f4c4 \u5df2\u751f\u6210\uff1aoutput/residential-good.txt")
+    if good_count == 0:
+        print("\u672c\u6b21\u6ca1\u6709\u68c0\u6d4b\u5230\u4f18\u8d28\u5bb6\u5bbd\u8282\u70b9")
     print("=" * 60)
 
 
