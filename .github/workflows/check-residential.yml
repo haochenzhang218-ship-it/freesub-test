@@ -24,6 +24,9 @@ jobs:
           pip install -r scripts/requirements.txt
           pip install openpyxl
 
+      - name: Prepare Xray and databases
+        run: python -c "from scripts.main import setup_environment; setup_environment()"
+
       - name: Run Residential Node Quality Check
         run: |
           python scripts/check_residential.py

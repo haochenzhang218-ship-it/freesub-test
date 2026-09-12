@@ -197,7 +197,7 @@ def setup_xray():
         print("[+] xray 内核下载完成")
         return True
     except Exception as e:
-        print(f"[!] xray 下载失败: {e}")
+        print(f"[!] xray 下载失败: {type(e).__name__}: {e}")
         return False
 
 
