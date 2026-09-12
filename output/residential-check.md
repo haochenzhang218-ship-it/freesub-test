@@ -1,6 +1,6 @@
 # 📊 节点质量检测报告
 
-> 生成时间：2026-09-12 06:15:39  |  检测节点总数：8  |  成功连通：8  |  失败：0
+> 生成时间：2026-09-12 06:25:08  |  检测节点总数：8  |  成功连通：8  |  失败：0
 
 ## 统计概览
 
@@ -13,14 +13,14 @@
 
 | # | 名称 | 协议 | 服务器 | 出口IP | 国家 | ASN | ISP/Org | IP类型 | 评级 | 延迟 |
 |---|:---|:---|:---|:---|:---|:---|:---|:---|:---|---:|
-| 1 | 19d5a678 | vless | hinet1.2yly.com:24215 | 118.167.209.5 | Taiwan | AS0 | Chunghwa Telecom Co., Ltd | 🥇 优质家宽 | 🥇 优质家宽 | 747ms |
-| 2 | 77777777 | vless | 172.64.52.230:2087 | 104.28.160.83 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 59ms |
-| 3 | 36.224.152.189 | ss | 36.224.152.189:50099 | 36.224.152.189 | Taiwan | AS0 | Chunghwa Telecom Co., Ltd | 🥇 优质家宽 | 🥇 优质家宽 | 450ms |
-| 4 | 77777777 | vless | 172.64.52.230:2087 | 104.28.160.76 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 72ms |
-| 5 | r3mrcg001286ek2.cybe | ss | r3mrcg001286ek2.cybervena.com:50099 | 36.224.174.174 | Taiwan | AS0 | Chunghwa Telecom Co., Ltd | 🥇 优质家宽 | 🥇 优质家宽 | 572ms |
-| 6 | f2a73750 | vless | 162.159.153.4:443 | 104.28.167.115 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 42ms |
-| 7 | 77777777 | vless | 104.16.150.108:2087 | 104.28.160.75 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 69ms |
-| 8 | 47fcef29 | vless | 188.114.97.6:2052 | 104.28.161.183 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 54ms |
+| 1 | 19d5a678 | vless | hinet1.2yly.com:24215 | 118.167.209.5 | Taiwan | AS0 | Chunghwa Telecom Co., Ltd | 🥇 优质家宽 | 🥇 优质家宽 | 1961ms |
+| 2 | 77777777 | vless | 172.64.52.230:2087 | 104.28.152.251 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 104ms |
+| 3 | 36.224.152.189 | ss | 36.224.152.189:50099 | 36.224.152.189 | Taiwan | AS0 | Chunghwa Telecom Co., Ltd | 🥇 优质家宽 | 🥇 优质家宽 | 565ms |
+| 4 | 77777777 | vless | 172.64.52.230:2087 | 104.28.161.127 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 139ms |
+| 5 | r3mrcg001286ek2.cybe | ss | r3mrcg001286ek2.cybervena.com:50099 | 36.224.174.174 | Taiwan | AS0 | Chunghwa Telecom Co., Ltd | 🥇 优质家宽 | 🥇 优质家宽 | 648ms |
+| 6 | f2a73750 | vless | 162.159.153.4:443 | 104.28.166.128 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 144ms |
+| 7 | 77777777 | vless | 104.16.150.108:2087 | 104.28.160.9 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 148ms |
+| 8 | 47fcef29 | vless | 188.114.97.6:2052 | 104.28.161.127 | United States | AS0 | Cloudflare, Inc. | 🔴 数据中心 / 机房 | 🔴 数据中心 / Cloudflare / 不符合要求 | 89ms |
 
 ## 说明
 
