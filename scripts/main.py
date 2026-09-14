@@ -825,6 +825,127 @@ def classify_and_filter(alive_nodes):
     print(f"[*] 智能去重与家宽防刷完成，出库总节点: {len(unique_all)} 个，纯净独立家宽: {len(seen_res_ips)} 个")
     return unique_all
 
+# ── 家宽节点 3 轮独立稳定性复测（只对已通过 residential 判定的少量节点，避免全量重复测活）─────────
+def run_stability_round(node_tuple, round_no):
+    """单轮完整重测：重新建立 Xray/SOCKS 隧道 -> 验证真实出口 IP -> 复核 residential。
+    node_tuple: (raw_node, server, port, proto)，与 test_single_node_xray 入参一致。"""
+    raw_node, server, port, proto = node_tuple
+    _r = test_single_node_xray(node_tuple)
+    exit_ip, delay_ms, confirmed = (None, 0, False)
+    ok = False
+    if _r:
+        _raw, _srv, _prt, _pt, exit_ip, delay_ms, confirmed = _r
+        ok = True
+    residential = False
+    reason = "no_exit"
+    if ok and confirmed and exit_ip and is_confirmed_exit_of(exit_ip):
+        try:
+            with maxminddb.open_database("ASN.mmdb") as asn_db:
+                a = asn_db.get(exit_ip)
+                _asn = a.get("autonomous_system_number", 0) if a else 0
+                _org = str(a.get("autonomous_system_organization", "")).lower() if a else ""
+                offline_res = is_verified_residential_offline(exit_ip, _org, _asn)
+            residential, reason = is_exit_confirmed_residential(exit_ip, offline_res, _org, _asn)
+        except Exception:
+            residential, reason = False, "asn_db_missing"
+    return {
+        "round": round_no,
+        "ok": bool(confirmed and residential and is_confirmed_exit_of(exit_ip)),
+        "connected": bool(ok),
+        "exit_ip": exit_ip or "",
+        "residential": residential,
+        "reason": reason,
+        "delay_ms": int(delay_ms or 0),
+    }
+
+
+def is_confirmed_exit_of(exit_ip):
+    """校验出口 IP 为合法 IP（配合 test_single_node_xray 的 confirmed 标志使用）。"""
+    try:
+        ipaddress.ip_address(exit_ip)
+        return True
+    except Exception:
+        return False
+
+
+def export_residential_stability(verified_nodes):
+    """对 is_residential=True 的节点做 3 轮独立重测，输出 stable-good / csv / md。"""
+    res_nodes = [n for n in verified_nodes if n["is_residential"]]
+    rows = []
+    for idx, node in enumerate(res_nodes, 1):
+        _outbound, _server, _port, _proto = parse_node_to_xray_outbound(node["link"])
+        node_tuple = (node["link"], _server, _port, _proto)
+        rounds = []
+        for r in range(1, 4):
+            res = run_stability_round(node_tuple, r)
+            rounds.append(res)
+        success = sum(1 for x in rounds if x["ok"])
+        failed = 3 - success
+        delays = [x["delay_ms"] for x in rounds if x["delay_ms"] > 0]
+        entry = {
+            "label": f"家宽-{idx:02d}",
+            "country": node["country"],
+            "proto": _proto,
+            "server": _server,
+            "port": _port,
+            "initial_exit_ip": node["exit_ip"],
+            "success": success,
+            "failed": failed,
+            "rate": f"{success}/3",
+            "avg_delay": int(sum(delays) / len(delays)) if delays else 0,
+            "min_delay": min(delays) if delays else 0,
+            "max_delay": max(delays) if delays else 0,
+            "rounds": rounds,
+            "fully_stable": success == 3,
+            "link": node["link"],
+        }
+        rows.append(entry)
+        print(f"[+] 稳定性 {entry['label']} ({_proto} {_server}:{_port}) 成功 {success}/3 平均延迟 {entry['avg_delay']}ms")
+
+    # 1) stable-good: 3 轮全部成功的 residential 节点完整 URL
+    stable_rows = [r for r in rows if r["fully_stable"]]
+    stable_links = [r["link"] for r in stable_rows]
+    with open(os.path.join(OUTPUT_DIR, "residential-stable-good.txt"), "w", encoding="utf-8") as f:
+        f.write(base64.b64encode("\n".join(stable_links).encode()).decode())
+
+    # 2) CSV
+    csv_path = os.path.join(OUTPUT_DIR, "residential-stability.csv")
+    with open(csv_path, "w", encoding="utf-8") as f:
+        f.write("标签,国家,协议,服务器,端口,初始出口IP,成功次数,失败次数,成功率,平均延迟ms,最低延迟ms,最高延迟ms,第1轮出口IP,第1轮延迟ms,第1轮residential,第1轮原因,第2轮出口IP,第2轮延迟ms,第2轮residential,第2轮原因,第3轮出口IP,第3轮延迟ms,第3轮residential,第3轮原因\n")
+        for r in rows:
+            rd = r["rounds"]
+            _fields = [
+                r["label"], r["country"], r["proto"], str(r["server"]), str(r["port"]), r["initial_exit_ip"],
+                str(r["success"]), str(r["failed"]), r["rate"],
+                str(r["avg_delay"]), str(r["min_delay"]), str(r["max_delay"]),
+            ]
+            for i in range(3):
+                _fields.extend([str(rd[i]["exit_ip"]), str(rd[i]["delay_ms"]), str(rd[i]["residential"]), rd[i]["reason"]])
+            f.write(",".join(_fields) + "\n")
+
+    # 3) MD
+    md_path = os.path.join(OUTPUT_DIR, "residential-stability.md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("# 🏠 家宽节点 3 轮稳定性检测\n\n")
+        f.write(f"> 检测时间: {time.strftime('%Y-%m-%d %H:%M:%S')}  |  检测节点: {len(rows)}  |  3轮全部成功: {len(stable_rows)}  |  失败: {len(rows)-len(stable_rows)}\n\n")
+        f.write("| 标签 | 国家 | 协议 | 服务器:端口 | 成功 | 平均延迟 | 最低 | 最高 | 稳定性 | 初始出口IP |\n")
+        f.write("|:---|:---|:---|:---|:---:|---:|---:|---:|:---|:---|\n")
+        for r in rows:
+            mark = "🟢 稳定" if r["fully_stable"] else "🔴 不稳定"
+            f.write(f"| {r['label']} | {r['country']} | {r['proto']} | {r['server']}:{r['port']} | {r['rate']} | {r['avg_delay']}ms | {r['min_delay']}ms | {r['max_delay']}ms | {mark} | {r['initial_exit_ip']} |\n")
+        f.write("\n## 各轮明细\n\n")
+        for r in rows:
+            f.write(f"### {r['label']}  成功 {r['rate']}\n\n")
+            f.write("| 轮次 | 出口IP | 延迟 | residential | 原因 |\n|:---|:---|---:|:---|:---|\n")
+            for x in r["rounds"]:
+                f.write(f"| 第{x['round']}轮 | {x['exit_ip'] or '-'} | {x['delay_ms']}ms | {'是' if x['residential'] else '否'} | {x['reason']} |\n")
+            f.write("\n")
+
+    print(f"[*] 稳定性检测完成: 检测 {len(rows)} 个家宽节点, 3轮全部成功 {len(stable_rows)} 个 -> residential-stable-good.txt")
+    return stable_rows
+
+
+
 def export_clash_yaml(clash_proxies, filepath):
     names = [p["name"] for p in clash_proxies]
     config = {
@@ -928,6 +1049,9 @@ def export_subscriptions(verified_nodes):
             f.write(base64.b64encode("\n".join(cr_links).encode()).decode())
         export_clash_yaml(cr_proxies, os.path.join(RESIDENTIAL_COUNTRY_DIR, f"clash-{cc}.yaml"))
         export_singbox_json(cr_proxies, os.path.join(RESIDENTIAL_COUNTRY_DIR, f"singbox-{cc}.json"))
+
+    # 家宽节点 3 轮独立稳定性复测（只针对已通过 residential 判定的少量节点）
+    export_residential_stability(verified_nodes)
 
     print(f"[*] 导出完毕！全量真活: {len(all_links)} | 家宽真活: {len(res_links)}")
     return len(all_links), len(res_links)
