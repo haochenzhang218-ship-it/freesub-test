@@ -3,6 +3,8 @@ import re
 import sys
 import json
 import time
+import logging
+
 import uuid
 import ipaddress
 import zipfile
@@ -57,19 +59,56 @@ CLOUDFLARE_IP_NETWORKS = [
     ipaddress.ip_network("162.158.0.0/15"),
     ipaddress.ip_network("104.16.0.0/13"),
     ipaddress.ip_network("104.24.0.0/14"),
+    ipaddress.ip_network("104.28.0.0/14"),
     ipaddress.ip_network("172.64.0.0/13"),
     ipaddress.ip_network("131.0.72.0/22"),
 ]
 
-def is_cloudflare_cdn_ip(ip_str):
+_CF_CACHE = {}
+
+def is_cloudflare_cdn_ip(value):
+    """统一判断: value 可以是 IP 或域名。
+    - 若为 IP, 直接比对 Cloudflare Anycast 网段。
+    - 若为域名, 先安全解析(带 2s 超时与进程内缓存)再判断; DNS 失败/无记录时
+      安全返回 False 并打日志, 绝不抛出导致节点主流程崩溃。
+    节点名称/国旗/地区标签绝不能作为判断依据, 只看真实 IP。"""
+    s = str(value or "").strip()
+    if not s:
+        return False
+    # 直接是 IP
     try:
-        ip_obj = ipaddress.ip_address(ip_str)
-        for net in CLOUDFLARE_IP_NETWORKS:
-            if ip_obj in net:
-                return True
-    except Exception:
+        ip_obj = ipaddress.ip_address(s)
+        return any(ip_obj in net for net in CLOUDFLARE_IP_NETWORKS)
+    except ValueError:
         pass
-    return False
+    # 域名: 先查缓存
+    if s in _CF_CACHE:
+        return _CF_CACHE[s]
+    resolved = set()
+    old_timeout = socket.getdefaulttimeout()
+    try:
+        socket.setdefaulttimeout(2.0)
+        try:
+            for infos in socket.getaddrinfo(s, None, socket.AF_INET, socket.SOCK_STREAM):
+                resolved.add(infos[4][0])
+        except Exception:
+            resolved = set()
+    finally:
+        socket.setdefaulttimeout(old_timeout)
+    if not resolved:
+        print(f"[is_cloudflare_cdn_ip] 域名 {s} DNS 解析失败或无 A 记录, 安全返回 False(不阻塞主流程)")
+        return False
+    hit = False
+    for ip in resolved:
+        try:
+            ip_obj = ipaddress.ip_address(ip)
+            if any(ip_obj in net for net in CLOUDFLARE_IP_NETWORKS):
+                hit = True
+                break
+        except Exception:
+            continue
+    _CF_CACHE[s] = hit
+    return hit
 
 # 常见机房与数据中心 ASN
 DATACENTER_ASNS = {
@@ -101,16 +140,33 @@ TRUE_RESIDENTIAL_ASNS = {
     701, 702, 7922, 20115, 2856, 5089, 5607, 3320, 3209
 }
 
+# 严格家宽白名单: 移除 user/dsl/cust/dial/home/cable/dynamic/consumer 等宽泛词,
+# 保留高置信度运营商/宽带特征, 并在匹配时采用整词边界规则。
 RESIDENTIAL_WHITELIST_KEYWORDS = [
-    "broadband", "dynamic", "pppoe", "cust", "dial", "user", "home",
-    "residential", "ftth", "cable", "dsl", "consumer",
-    "chunghwa", "hinet", "cht", "data communication business group",
-    "taiwan fixed network", "kbro", "far eastone", "tfn",
-    "hkbn", "hong kong broadband", "pccw", "hkt", "hgc", "smartone",
-    "so-net", "kddi", "softbank", "ocn", "plala", "sk broadband", "korea telecom",
-    "comcast", "charter", "at&t", "verizon", "spectrum", "cox", "vodafone",
-    "deutsche telekom", "telekom", "orange", "bt-central", "virgin media"
+    "residential", "broadband", "ftth", "pppoe",
+    "chunghwa", "hinet", "cht", "kbro", "far eastone", "tfn",
+    "hkbn", "pccw", "smartone",
+    "so-net", "kddi", "softbank", "ocn", "plala",
+    "sk broadband", "korea telecom",
+    "comcast", "charter", "verizon", "spectrum", "cox", "vodafone",
+    "orange", "deutsche telekom", "bt-central", "virgin media",
 ]
+
+def _match_residential_keyword(text_lower):
+    """整词边界匹配: 避免 'user'/'dsl' 等子串误命中(如 Cloudflare rDNS 含 'dsl' 前缀)。
+    采用 token 边界 + 多词短语连续子串的组合条件。"""
+    import re as _re
+    for kw in RESIDENTIAL_WHITELIST_KEYWORDS:
+        k = kw.lower()
+        # 1) 精确 token 命中(按非字母数字切分)
+        tokens = _re.split(r"[^\w\u4e00-\u9fff]+", text_lower)
+        if k in tokens:
+            return True
+        # 2) 多词短语: 在原文中作为连续子串出现(含空格/连字符)
+        if " " in k or "-" in k:
+            if k in text_lower:
+                return True
+    return False
 
 COUNTRY_NAMES = {
     "HK": "中国香港 (Hong Kong)",
@@ -586,19 +642,101 @@ def get_rdns_host(ip):
         return ""
 
 def is_verified_residential_offline(ip, org_str, asn):
+    """离线预筛: 先过 CF/数据中心一票否决, 再走明确家宽 ASN, 最后严格词边界白名单。
+    节点名称/国旗/地区标签绝不作为依据, 只看 org + rDNS 文本。"""
+    # 0) Cloudflare 网段(含域名入口)一票否决: 即使 ASN 在白名单也非家宽
+    if is_cloudflare_cdn_ip(ip):
+        return False
+
+    # 1) 明确 residential ASN 优先(最高置信度)
     if asn in TRUE_RESIDENTIAL_ASNS:
         return True
 
     info = f"{org_str} {get_rdns_host(ip)}".lower()
+
+    # 2) 数据中心/云厂商关键词硬否决(子串即可, 防止漏网)
     for kw in IDC_KEYWORDS:
         if kw in info:
             return False
-            
-    for r_kw in RESIDENTIAL_WHITELIST_KEYWORDS:
-        if r_kw in info:
-            return True
+
+    # 3) 严格词边界白名单(避免 user/dsl 等子串误命中)
+    if _match_residential_keyword(info):
+        return True
 
     return False
+
+
+# ── 在线出口复核：统一 residential 判定的最终闸门 ─────────────────────────────
+_ONLINE_EXIT_CACHE = {}
+
+def query_exit_ip_info_online(exit_ip):
+    """通过 ip-api 在线复核出口 IP 的 residential 属性。
+    返回 dict(含 proxy/hosting/mobile/isp/asn) 或 None（失败时）。
+    进程内缓存，避免重复查询。"""
+    s = str(exit_ip or "").strip()
+    if not s:
+        return None
+    if s in _ONLINE_EXIT_CACHE:
+        return _ONLINE_EXIT_CACHE[s]
+    info = None
+    try:
+        import urllib.request
+        url = ("http://ip-api.com/json/" + urllib.parse.quote(s) +
+               "?fields=status,query,country,regionName,city,isp,org,asn,as,mobile,proxy,Hosting")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (CI)"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if data.get("status") == "success":
+            info = {
+                "query": data.get("query", ""),
+                "country": data.get("country", ""),
+                "isp": data.get("isp", ""),
+                "org": data.get("org", ""),
+                "asn": data.get("asn", ""),
+                "mobile": bool(data.get("mobile", False)),
+                "proxy": bool(data.get("proxy", False)),
+                "hosting": bool(data.get("hosting", False)),
+            }
+    except Exception:
+        info = None
+    _ONLINE_EXIT_CACHE[s] = info
+    return info
+
+
+def is_exit_confirmed_residential(exit_ip, offline_res, org_str, asn):
+    """统一判定闸门：只有真实出口 IP 在线确认为 residential/home broadband 才允许 True。
+    - 出口 IP 属于 Cloudflare → 一票否决
+    - 出口 IP ASN 属于数据中心/云厂商 → 一票否决
+    - 无法确认真实出口 IP（offline_res 为 False 或在线查询失败）→ 不得判为家宽
+    返回 (bool, reason)。"""
+    # 一票否决：Cloudflare 网段
+    if is_cloudflare_cdn_ip(exit_ip):
+        return False, "CF"
+    # 一票否决：数据中心 ASN
+    if asn in DATACENTER_ASNS:
+        return False, "DC_ASN"
+    # 必须有离线预筛通过的前提
+    if not offline_res:
+        return False, "no_offline"
+    # 在线复核
+    online = query_exit_ip_info_online(exit_ip)
+    if not online:
+        # 无法确认真实出口 → 保守不判家宽（宁缺毋滥）
+        return False, "no_online_confirm"
+    # proxy/VPN 或数据中心 hosting 出口 → 否决（非固定住宅）
+    if online.get("proxy") or online.get("hosting"):
+        return False, "proxy/hosting"
+    # 明确 residential 证据：命中严格词边界白名单
+    isp_org = f"{online.get('isp','')} {online.get('org','')}".lower()
+    if _match_residential_keyword(isp_org):
+        return True, "online_res"
+    # 离线已确认且在线未命中 DC/IDC → 接受
+    combined = f"{org_str} {isp_org}"
+    for kw in IDC_KEYWORDS:
+        if kw in combined:
+            return False, "idc_kw"
+    return True, "offline+online_ok"
+
 
 def classify_and_filter(alive_nodes):
     country_reader = maxminddb.open_database("Country.mmdb")
@@ -622,16 +760,22 @@ def classify_and_filter(alive_nodes):
         if not is_confirmed_exit or is_cloudflare_cdn_ip(exit_ip):
             is_residential = False
         else:
-            is_residential = False
+            # 先做离线预筛（词边界白名单 + ASN 黑白名单）
+            offline_res = False
+            _org = ""
+            _asn = 0
             try:
                 a = asn_reader.get(exit_ip)
-                asn = a.get("autonomous_system_number", 0) if a else 0
-                org = str(a.get("autonomous_system_organization", "")).lower() if a else ""
-                
-                if asn not in DATACENTER_ASNS:
-                    is_residential = is_verified_residential_offline(exit_ip, org, asn)
+                _asn = a.get("autonomous_system_number", 0) if a else 0
+                _org = str(a.get("autonomous_system_organization", "")).lower() if a else ""
+                if _asn not in DATACENTER_ASNS:
+                    offline_res = is_verified_residential_offline(exit_ip, _org, _asn)
             except Exception:
-                pass
+                offline_res = False
+            # 统一在线复核闸门：只有真实出口 IP 在线确认 residential 才允许 is_residential=True
+            is_residential, _res_reason = is_exit_confirmed_residential(
+                exit_ip, offline_res, _org, _asn
+            )
 
         c_dict = convert_to_clash_dict(raw_node, "temp")
         if not c_dict:
@@ -993,3 +1137,4 @@ if __name__ == "__main__":
     verified = classify_and_filter(alive_nodes)
     export_subscriptions(verified)
     update_readme()
+

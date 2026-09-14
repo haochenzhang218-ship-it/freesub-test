@@ -34,71 +34,21 @@ _handler.setLevel(logging.DEBUG)
 _handler.setFormatter(logging.Formatter('[DEBUG] %(message)s'))
 _logger.addHandler(_handler)
 
-# 复用 main.py 中的常量与判断逻辑
-CLOUDFLARE_IP_NETWORKS = [
-    ipaddress.ip_network("173.245.48.0/20"),
-    ipaddress.ip_network("103.21.244.0/22"),
-    ipaddress.ip_network("103.22.200.0/22"),
-    ipaddress.ip_network("103.31.4.0/22"),
-    ipaddress.ip_network("141.101.64.0/18"),
-    ipaddress.ip_network("108.162.192.0/18"),
-    ipaddress.ip_network("190.93.240.0/20"),
-    ipaddress.ip_network("188.114.96.0/20"),
-    ipaddress.ip_network("197.234.240.0/22"),
-    ipaddress.ip_network("198.41.128.0/17"),
-    ipaddress.ip_network("162.158.0.0/15"),
-    ipaddress.ip_network("104.16.0.0/13"),
-    ipaddress.ip_network("104.24.0.0/14"),
-    ipaddress.ip_network("172.64.0.0/13"),
-    ipaddress.ip_network("131.0.72.0/22"),
-]
-
-DATACENTER_ASNS = {
-    13335, 16509, 14618, 15169, 396982, 8075, 24940, 16276,
-    14061, 31898, 63949, 45102, 132203, 20473, 60068, 55081,
-    197540, 51167, 8560, 42708, 201814, 49981, 212238, 46652,
-    141995, 200019, 136907, 39351, 9009, 174, 3356, 1299, 2914,
-    199180, 202051, 62240, 49304, 34665, 209242, 219337, 44477,
-    200651, 202685, 210644, 205628, 51852, 204544, 397373,
-}
-
-IDC_KEYWORDS = [
-    "hosting", "datacenter", "data center", "cloud", "server", "vps",
-    "dedicated", "compute", "colo", "digitalocean", "linode", "ovh",
-    "hetzner", "choopa", "vultr", "alibaba", "tencent", "amazon", "aws",
-    "google", "microsoft", "oracle", "fastly", "cloudflare", "akamai",
-    "netgrid", "m247", "leaseweb", "contabo", "cogent", "zenlayer",
-    "ucloud", "lagom", "ipvolume", "hostkey", "selectel", "quadranet",
-    "buyvm", "play2go", "fzco",
-]
-
-RESIDENTIAL_WHITELIST_KEYWORDS = [
-    "broadband", "dynamic", "pppoe", "cust", "dial", "user", "home",
-    "residential", "ftth", "cable", "dsl", "consumer",
-    "chunghwa", "hinet", "cht", "data communication business group",
-    "taiwan fixed network", "kbro", "far eastone", "tfn",
-    "hkbn", "hong kong broadband", "pccw", "hkt", "hgc", "smartone",
-    "so-net", "kddi", "softbank", "ocn", "plala", "sk broadband",
-    "korea telecom",
-    "comcast", "charter", "at&t", "verizon", "spectrum", "cox",
-    "vodafone", "deutsche telekom", "telekom", "orange", "bt-central",
-    "virgin media",
-]
-
-INPUT_FILE = "output/residential.txt"
-OUTPUT_CSV = "output/residential-check.csv"
-OUTPUT_MD  = "output/residential-check.md"
+# 复用 main.py 中的常量与判断逻辑（单一事实来源，避免两套判定相互矛盾）
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from main import (
+    CLOUDFLARE_IP_NETWORKS,
+    DATACENTER_ASNS,
+    IDC_KEYWORDS,
+    RESIDENTIAL_WHITELIST_KEYWORDS,
+    is_cloudflare_cdn_ip,
+    _match_residential_keyword,
+)
 
 
 # ─── 工具函数 ────────────────────────────────────────────────────────────────
-
-def is_cloudflare_cdn_ip(ip_str):
-    try:
-        ip_obj = ipaddress.ip_address(ip_str)
-        return any(ip_obj in net for net in CLOUDFLARE_IP_NETWORKS)
-    except Exception:
-        return False
-
 
 def is_idc_ip(org_str):
     if not org_str:
@@ -108,24 +58,25 @@ def is_idc_ip(org_str):
 
 
 def classify_ip_type(exit_ip, org_str, asn):
-    """返回 (ip_type, detail)，ip_type: cloudflare/datacenter/isp/residential"""
+    """与 main.py 共用同一判定基准（单一事实来源）：
+    - Cloudflare / 数据中心 / IDC 关键词 → 🔴（与 main.py 的 is_exit_confirmed_residential 一票否决一致）
+    - 命中严格词边界 residential 白名单 → 🥇 优质家宽（等价于 main.py 允许 is_residential=True 的证据）
+    - 其余 → 🥈 ISP / 普通 IP
+    确保 check 报告与 residential.txt 不再出现相互矛盾的判定。"""
     if is_cloudflare_cdn_ip(exit_ip):
         return "🔴 Cloudflare CDN", "入口/中转地址，非真实出口"
-
     if asn in DATACENTER_ASNS:
         return "🔴 数据中心 / 云服务商", f"ASN {asn}"
-
     if is_idc_ip(org_str):
         return "🔴 数据中心 / 机房", org_str
-
-    # 民用白名单命中
-    lower_org = (org_str or "").lower()
-    for kw in RESIDENTIAL_WHITELIST_KEYWORDS:
-        if kw in lower_org:
-            return "🥇 优质家宽", org_str
-
-    # 非数据中心且非云服务商 → ISP / 普通宽带
+    if _match_residential_keyword((org_str or "").lower()):
+        return "🥇 优质家宽", org_str
     return "🥈 ISP / 普通 IP", org_str or "未知"
+
+
+
+OUTPUT_CSV = "output/residential-check.csv"
+OUTPUT_MD  = "output/residential-check.md"
 
 
 def extract_node_info(node_str):
@@ -679,3 +630,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
