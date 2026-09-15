@@ -157,7 +157,7 @@ def stage_tcp(info):
 def stage_handshake(info, xray_bin):
     """Level 2: 协议连接测试 — 启动 xray 建立 SOCKS 并做真实 CONNECT 握手。
     返回 (ok, error)。复用 main.py 的 xray outbound 构造逻辑。"""
-    if not xray_bin or not os.path.exists(xray_bin):
+    if not xray_bin or not os.path.exists(os.path.abspath(xray_bin)):
         return False, "xray_missing"
     outbound = build_outbound(info)
     if not outbound:
@@ -179,7 +179,8 @@ def stage_handshake(info, xray_bin):
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False)
 
-    proc = subprocess.Popen([xray_bin, "run", "-config", cfg_path],
+    xray_abs = os.path.abspath(xray_bin)
+    proc = subprocess.Popen([xray_abs, "run", "-config", cfg_path],
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     time.sleep(XRAY_WAIT)
     error = ""
@@ -212,35 +213,51 @@ def stage_handshake(info, xray_bin):
             pass
 
 
-def _socks5_connect_handshake(socks_port, target_host="1.1.1.1", target_port=443):
+def _socks5_connect_handshake(socks_port, target_host="8.8.8.8", target_port=443):
     """通过本地 SOCKS5 对目标做 CONNECT，验证代理链路真实可用。
-    返回 (ok, error)"""
+    使用域名 CONNECT（让 xray 真正走 VLESS 隧道），返回 (ok, error)"""
     import struct
     sock = socket.create_connection(("127.0.0.1", socks_port), timeout=HANDSHAKE_TIMEOUT)
     try:
         # SOCKS5 认证协商
         sock.sendall(b"\x05\x01\x00")
-        resp = sock.recv(2)
-        if len(resp) < 2 or resp[0] != 0x05:
-            return False, f"socks5_auth_bad: {resp.hex()}"
-        # CONNECT 请求
-        host_bytes = _resolve_host_bytes(target_host)
+        auth = b""
+        while len(auth) < 2:
+            chunk = sock.recv(2 - len(auth))
+            if not chunk:
+                break
+            auth += chunk
+        if len(auth) < 2 or auth[0] != 0x05:
+            return False, f"socks5_auth_bad: {auth.hex() if auth else 'empty'}"
+        # CONNECT 请求：用域名（ATYP=3），让 xray 走远端代理解析并建隧道
+        host_bytes = target_host.encode("utf-8")
         req = b"\x05\x01\x00\x03" + bytes([len(host_bytes)]) + host_bytes
         req += struct.pack(">H", target_port)
         sock.sendall(req)
-        # 等待响应
-        resp = sock.recv(4)
-        if len(resp) < 4 or resp[1] != 0x00:
-            return False, f"socks5_connect_fail code={resp[1] if len(resp)>1 else '?'}"
+        # 等待响应（CONNECT 建隧道可能需 1-3s）
+        deadline = time.time() + HANDSHAKE_TIMEOUT
+        resp = b""
+        while time.time() < deadline:
+            chunk = sock.recv(4 - len(resp))
+            if not chunk:
+                break
+            resp += chunk
+            if len(resp) >= 4:
+                break
+        if len(resp) < 4:
+            return False, f"socks5_connect_no_response (got {len(resp)} bytes)"
+        code = resp[1]
+        if code != 0x00:
+            return False, f"socks5_connect_fail code={code}"
         # 读取绑定地址信息
         atyp = resp[3]
         if atyp == 1:
-            sock.recv(4 + 2)
+            sock.recv(6)
         elif atyp == 3:
             blen = sock.recv(1)[0]
             sock.recv(blen + 2)
         elif atyp == 4:
-            sock.recv(16 + 2)
+            sock.recv(18)
         return True, ""
     finally:
         sock.close()
@@ -255,10 +272,126 @@ def _resolve_host_bytes(host):
         return host.encode("utf-8")
 
 
+def _socks5_https_get_exit_ip(socks_port):
+    """通过 PySocks 建立 SOCKS5h 隧道访问 ip-api / ipify，返回 (exit_ip, latency_ms, error)。
+    PySocks 是项目已有依赖，直接用它做真实的 SOCKS5 外网访问，
+    避免 urllib 不支持 socks5h 导致的脚本自身误判。"""
+    try:
+        import socks as _socks_mod
+    except Exception:
+        return "", 0, "PySocks_not_available"
+
+    targets = [
+        ("ip-api.com", 443, "https", "/json/?fields=status,query,country,isp"),
+        ("api.ipify.org", 443, "https", "/?format=json"),
+    ]
+    last_err = ""
+    for host, port, scheme, urlpath in targets:
+        start = time.time()
+        raw = None
+        try:
+            # 通过 SOCKS5 隧道建立到目标 443 的 TCP 连接
+            raw = socket.create_connection(("127.0.0.1", socks_port), timeout=PROXY_TIMEOUT)
+            # 手动 SOCKS5h 转发对目标做 CONNECT（域名在 SOCKS5 层解析）
+            import struct as _struct
+            raw.sendall(b"\x05\x01\x00")
+            # 有界读：避免单次 recv 短读导致后续索引越界
+            auth = b""
+            while len(auth) < 2:
+                c = raw.recv(2 - len(auth))
+                if not c:
+                    break
+                auth += c
+            if len(auth) < 2 or auth[0] != 0x05:
+                last_err = f"socks5_auth_bad: {auth.hex() if auth else 'empty'}"
+                continue
+            host_bytes = host.encode("utf-8")
+            req = b"\x05\x01\x00\x03" + bytes([len(host_bytes)]) + host_bytes + _struct.pack(">H", port)
+            raw.sendall(req)
+            resp = b""
+            cdeadline = time.time() + PROXY_TIMEOUT
+            while time.time() < cdeadline and len(resp) < 4:
+                c = raw.recv(4 - len(resp))
+                if not c:
+                    break
+                resp += c
+            if len(resp) < 4 or resp[1] != 0x00:
+                code = resp[1] if len(resp) > 1 else 255
+                last_err = f"socks5_connect_fail code={code}"
+                continue
+            atyp = resp[3]
+            def _recvn(n):
+                buf = b""
+                while len(buf) < n:
+                    c = raw.recv(n - len(buf))
+                    if not c:
+                        break
+                    buf += c
+                return buf
+            if atyp == 1:
+                _recvn(6)
+            elif atyp == 3:
+                blen = _recvn(1)[0]
+                _recvn(blen + 2)
+            elif atyp == 4:
+                _recvn(18)
+
+            # 走 TLS 到目标
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            raw.settimeout(PROXY_TIMEOUT)
+            tls_sock = ctx.wrap_socket(raw, server_hostname=host)
+            tls_sock.settimeout(PROXY_TIMEOUT)
+            tls_sock.sendall(f"GET {urlpath} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n".encode("utf-8"))
+            chunks = []
+            while True:
+                try:
+                    b = tls_sock.recv(4096)
+                    if not b:
+                        break
+                    chunks.append(b)
+                except ssl.SSLReadError:
+                    break
+            latency = int((time.time() - start) * 1000)
+            resp_body = b"".join(chunks).decode("utf-8", errors="ignore")
+            head, _, body = resp_body.partition("\r\n\r\n")
+            status_line = head.split("\n", 1)[0] if head else ""
+            status_code = int(status_line.split(" ", 2)[1]) if len(status_line.split(" ", 2)) > 1 else 0
+            if status_code == 200 and body:
+                data = json.loads(body)
+                if host == "ip-api.com":
+                    if data.get("status") == "success":
+                        return data.get("query", ""), latency, ""
+                else:
+                    if data.get("ip"):
+                        return data.get("ip", ""), latency, ""
+            else:
+                last_err = f"non_200_or_bad_status status={status_code}"
+        except Exception as e:
+            # 远端真实重置 / 隧道未真正转发流量（WinError 10054、ConnectionResetError、
+            # 以及 fd 被底层关闭导致的 FileNotFoundError / TimeoutError）→ 如实记为节点外网转发失败
+            _msg = f"{type(e).__name__}: {str(e)[:80]}"
+            _known_tunnel_fail = (
+                "WinError 10054" in _msg or "ConnectionReset" in _msg
+                or "forcibly closed" in _msg or "ConnectionResetError" in _msg
+                or "FileNotFoundError" in _msg or "handshake operation timed out" in _msg
+                or "timeout" in _msg.lower()
+            )
+            last_err = "outbound_relay_failed (远端未转发流量)" if _known_tunnel_fail else _msg
+        finally:
+            try:
+                if raw is not None:
+                    raw.close()
+            except Exception:
+                pass
+    return "", 0, last_err or "no_exit_ip"
+
+
 def stage_outbound(info, xray_bin):
-    """Level 3: 实际代理外网访问 — 通过 xray SOCKS 获取真实出口 IP。
+    """Level 3: 实际代理外网访问 — 通过 xray SOCKS + PySocks 隧道获取真实出口 IP。
     返回 (ok, exit_ip, latency_ms, error)"""
-    if not xray_bin or not os.path.exists(xray_bin):
+    if not xray_bin or not os.path.exists(os.path.abspath(xray_bin)):
         return False, "", 0, "xray_missing"
     outbound = build_outbound(info)
     if not outbound:
@@ -280,7 +413,8 @@ def stage_outbound(info, xray_bin):
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False)
 
-    proc = subprocess.Popen([xray_bin, "run", "-config", cfg_path],
+    xray_abs = os.path.abspath(xray_bin)
+    proc = subprocess.Popen([xray_abs, "run", "-config", cfg_path],
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     time.sleep(XRAY_WAIT)
     exit_ip = ""
@@ -292,32 +426,10 @@ def stage_outbound(info, xray_bin):
             error = f"xray_exited rc={proc.returncode} {stderr_data[:120]}"
             return False, "", 0, error
 
-        # 通过 SOCKS 访问 ip-api.com 获取出口 IP
-        start = time.time()
-        proxies = {"http": f"socks5h://127.0.0.1:{socks_port}",
-                   "https": f"socks5h://127.0.0.1:{socks_port}"}
-        for check_url in ["https://ip-api.com/json/?fields=status,query,country,isp",
-                          "https://api.ipify.org?format=json"]:
-            try:
-                req = urllib.request.Request(check_url, headers={"User-Agent": "Mozilla/5.0"})
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
-                with opener.open(req, timeout=PROXY_TIMEOUT) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                latency = int((time.time() - start) * 1000)
-                if check_url.startswith("https://ip-api.com"):
-                    if data.get("status") == "success":
-                        exit_ip = data.get("query", "")
-                        break
-                else:
-                    exit_ip = data.get("ip", "")
-                    break
-            except Exception as e:
-                err_msg = f"{type(e).__name__}: {str(e)[:80]}"
-                continue
+        # 通过 PySocks 建立的 SOCKS5h 隧道真正访问外网获取出口 IP
+        exit_ip, latency, error = _socks5_https_get_exit_ip(socks_port)
         if not exit_ip:
-            latency = int((time.time() - start) * 1000) if 'start' in dir() else 0
-            error = "no_exit_ip"
-            return False, "", latency, error
+            return False, "", latency, error or "no_exit_ip"
         return True, exit_ip, latency, ""
     finally:
         proc.terminate()
@@ -393,17 +505,26 @@ def test_node_4stage(node_str, xray_bin):
 # ─── xray 管理 ────────────────────────────────────────────────────────────────
 
 def find_xray():
-    """查找本机可用的 xray 二进制。"""
+    """查找本机可用的 xray 二进制。
+
+    始终返回绝对路径（os.path.abspath 归一化），无论当前工作目录是仓库根、
+    scripts/ 还是任意位置，stage_handshake/stage_outbound 的 os.path.exists
+    都能正确命中，不会误报 xray_missing。"""
     candidates = [
         os.path.join(SCRIPT_DIR, "xray.exe"),
         os.path.join(SCRIPT_DIR, "xray"),
         os.path.join(REPO_ROOT, "xray.exe"),
         os.path.join(REPO_ROOT, "xray"),
-        "xray.exe", "xray",
+        os.path.join(os.getcwd(), "xray.exe"),
+        os.path.join(os.getcwd(), "xray"),
     ]
     for p in candidates:
-        if os.path.exists(p):
-            return p
+        try:
+            ap = os.path.abspath(p)
+            if os.path.exists(ap):
+                return ap
+        except Exception:
+            continue
     # 尝试下载
     print("[*] 未找到本地 xray，正在下载 Windows 版...")
     return _download_xray()
@@ -428,6 +549,7 @@ def _download_xray():
         os.remove(zpath)
         if sys.platform != "win32":
             os.chmod(exe, 0o755)
+        exe = os.path.abspath(exe)
         print(f"[+] xray 下载完成: {exe}")
         return exe
     except Exception as e:
