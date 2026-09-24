@@ -6,18 +6,17 @@ log-level: info
 proxies:
 - name: 🇯🇵 日本 (Japan) 01 (家宽) - xiaohe
   type: vless
-  server: 57.129.52.47
-  port: 52014
-  uuid: ecc4675b-1607-4699-8b20-23af97b671af
+  server: 172.67.152.71
+  port: 8880
+  uuid: e1bd06de-a075-4ad5-b73f-b54587368cc7
   udp: true
-  tls: true
+  tls: false
   skip-cert-verify: true
-  servername: kqjifhg9rw.tradsc8p9xp7wxyqmc1wy0ah.workers.dev
   network: ws
   ws-opts:
-    path: /@Marisa_kristi
+    path: /pyip=ProxyIP.JP.CMLiussss.net
     headers:
-      Host: kqjifhg9rw.tradsc8p9xp7wxyqmc1wy0ah.workers.dev
+      Host: morning-feather-dc98.136-25b.workers.dev
 proxy-groups:
 - name: PROXIES
   type: select
