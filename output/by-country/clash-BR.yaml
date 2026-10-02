@@ -4,31 +4,33 @@ allow-lan: true
 mode: rule
 log-level: info
 proxies:
-- name: 🇨🇿 CZ 01 - xiaohe
-  type: vless
-  server: port2.axiomed.ir
+- name: 🇧🇷 BR 01 - xiaohe
+  type: vmess
+  server: aksai.org
   port: 443
-  uuid: 73b03366-975a-4ca7-a41c-0f7e1b5d944a
+  uuid: 03fcc618-b93d-6796-6aed-8a38c975d581
+  alterId: 0
+  cipher: auto
   udp: true
   tls: true
   skip-cert-verify: true
-  servername: l75yY2sJQN5Fn0Gx.fORNeWIran-1013.worKERS.DeV
+  servername: aksai.org
   network: ws
   ws-opts:
-    path: /vl/olqQqiJtpH7kVUcHl0PXN
+    path: /linkvws
     headers:
-      Host: l75yy2sjqn5fn0gx.fornewiran-1013.workers.dev
+      Host: aksai.org
 proxy-groups:
 - name: PROXIES
   type: select
   proxies:
   - AUTO
-  - 🇨🇿 CZ 01 - xiaohe
+  - 🇧🇷 BR 01 - xiaohe
 - name: AUTO
   type: url-test
   url: https://www.google.com/generate_204
   interval: 300
   proxies:
-  - 🇨🇿 CZ 01 - xiaohe
+  - 🇧🇷 BR 01 - xiaohe
 rules:
 - MATCH,PROXIES
