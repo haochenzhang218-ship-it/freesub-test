@@ -5,19 +5,12 @@ mode: rule
 log-level: info
 proxies:
 - name: 🇷🇺 俄罗斯 (Russia) 01 - xiaohe
-  type: vless
-  server: 188.114.97.1
-  port: 2053
-  uuid: 0b3e7958-e5c4-498f-ab21-b49686f95d2d
+  type: ss
+  server: 130.49.189.158
+  port: 43558
+  cipher: chacha20-ietf-poly1305
+  password: EKGHx2yhUzmnRONhNOxvn+BqUr10wfqDQqRg4DYUJE8=
   udp: true
-  tls: true
-  skip-cert-verify: true
-  servername: bold-term-4edd.mbigspot.workers.dev
-  network: ws
-  ws-opts:
-    path: /
-    headers:
-      Host: bold-term-4edd.mbigspot.workers.dev
 proxy-groups:
 - name: PROXIES
   type: select
