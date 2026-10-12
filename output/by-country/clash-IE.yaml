@@ -20,10 +20,10 @@ proxies:
       Host: ccc.010304.xyz
 - name: 🇮🇪 IE 02 - xiaohe
   type: ss
-  server: 20.123.1.55
+  server: 20.234.97.18
   port: 443
   cipher: chacha20-ietf-poly1305
-  password: YF329KNGVTUZ1qrH
+  password: GayYa2V7pUbJBfKu
   udp: true
 - name: 🇮🇪 IE 03 - xiaohe
   type: ss
