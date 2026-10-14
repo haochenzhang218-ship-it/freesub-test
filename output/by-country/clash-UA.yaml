@@ -4,31 +4,31 @@ allow-lan: true
 mode: rule
 log-level: info
 proxies:
-- name: 🇱🇰 LK 01 - xiaohe
+- name: 🇺🇦 UA 01 - xiaohe
   type: vless
-  server: centurylink.es
-  port: 8443
-  uuid: c136a12c-4260-48a7-a1e6-fbda83a11045
+  server: 45.158.185.172
+  port: 443
+  uuid: 49e4b91a-bd15-4e54-9b51-41a3380afb51
   udp: true
   tls: true
   skip-cert-verify: true
-  servername: free.sahanwickramasinghe.me
+  servername: z5n1.vpnpolar.online
   network: ws
   ws-opts:
-    path: /
+    path: /beeline
     headers:
-      Host: free.sahanwickramasinghe.me
+      Host: z5n1.vpnpolar.online
 proxy-groups:
 - name: PROXIES
   type: select
   proxies:
   - AUTO
-  - 🇱🇰 LK 01 - xiaohe
+  - 🇺🇦 UA 01 - xiaohe
 - name: AUTO
   type: url-test
   url: https://www.google.com/generate_204
   interval: 300
   proxies:
-  - 🇱🇰 LK 01 - xiaohe
+  - 🇺🇦 UA 01 - xiaohe
 rules:
 - MATCH,PROXIES
