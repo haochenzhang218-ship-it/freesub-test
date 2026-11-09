@@ -4,47 +4,47 @@ allow-lan: true
 mode: rule
 log-level: info
 proxies:
-- name: 🇱🇰 LK 01 - xiaohe
+- name: 🇸🇨 SC 01 - xiaohe
   type: vless
-  server: 170.114.46.6
-  port: 2096
-  uuid: efd11a89-7506-44ce-95b6-6654859f155b
+  server: 154.211.8.227
+  port: 2087
+  uuid: 40af9131-d540-448a-bc56-5bba147a1dc3
   udp: true
   tls: true
   skip-cert-verify: true
-  servername: pcloud.z-tas.com
+  servername: proxy-34l.pages.dev
   network: ws
   ws-opts:
     path: /
     headers:
-      Host: pcloud.z-tas.com
-- name: 🇱🇰 LK 02 - xiaohe
+      Host: proxy-34l.pages.dev
+- name: 🇸🇨 SC 02 - xiaohe
   type: vless
-  server: 170.114.45.6
-  port: 2096
-  uuid: efd11a89-7506-44ce-95b6-6654859f155b
+  server: 154.218.15.250
+  port: 2083
+  uuid: 40af9131-d540-448a-bc56-5bba147a1dc3
   udp: true
   tls: true
   skip-cert-verify: true
-  servername: pcloud.z-tas.com
+  servername: proxy-1cu.pages.dev
   network: ws
   ws-opts:
     path: /
     headers:
-      Host: pcloud.z-tas.com
+      Host: proxy-1cu.pages.dev
 proxy-groups:
 - name: PROXIES
   type: select
   proxies:
   - AUTO
-  - 🇱🇰 LK 01 - xiaohe
-  - 🇱🇰 LK 02 - xiaohe
+  - 🇸🇨 SC 01 - xiaohe
+  - 🇸🇨 SC 02 - xiaohe
 - name: AUTO
   type: url-test
   url: https://www.google.com/generate_204
   interval: 300
   proxies:
-  - 🇱🇰 LK 01 - xiaohe
-  - 🇱🇰 LK 02 - xiaohe
+  - 🇸🇨 SC 01 - xiaohe
+  - 🇸🇨 SC 02 - xiaohe
 rules:
 - MATCH,PROXIES
