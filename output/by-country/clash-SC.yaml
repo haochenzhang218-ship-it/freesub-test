@@ -4,27 +4,32 @@ allow-lan: true
 mode: rule
 log-level: info
 proxies:
-- name: 🇫🇮 FI 01 - xiaohe
+- name: 🇸🇨 SC 01 - xiaohe
   type: vmess
-  server: 65.108.240.210
-  port: 39018
-  uuid: fa15684a-81e6-4ba7-bc4b-f601c0d998e9
+  server: 156.239.224.107
+  port: 57278
+  uuid: 1270bed5-f908-4ecc-f1c8-de246033b186
   alterId: 0
   cipher: auto
   udp: true
   tls: false
   skip-cert-verify: true
+  network: ws
+  ws-opts:
+    path: /
+    headers:
+      Host: ''
 proxy-groups:
 - name: PROXIES
   type: select
   proxies:
   - AUTO
-  - 🇫🇮 FI 01 - xiaohe
+  - 🇸🇨 SC 01 - xiaohe
 - name: AUTO
   type: url-test
   url: https://www.google.com/generate_204
   interval: 300
   proxies:
-  - 🇫🇮 FI 01 - xiaohe
+  - 🇸🇨 SC 01 - xiaohe
 rules:
 - MATCH,PROXIES
